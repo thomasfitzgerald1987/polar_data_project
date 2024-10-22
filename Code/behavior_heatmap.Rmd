@@ -1,0 +1,140 @@
+---
+title: '20240424'
+author: "Thomas FitzGerald"
+date: "2024-04-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(readxl)
+library(dplyr)
+library(plotly)
+library(ggplot2)
+library(stats)
+library(multcomp)
+library(emmeans)
+library(lsmeans)
+
+library(stringr)
+library(lubridate)
+```
+
+
+```{r}
+df <- read.csv('C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\Cow_Activity_Heatmap.csv')
+df[is.na(df)] <- 0
+df$Player_Number <- as.character(df$Player_Number)
+
+df <- pivot_longer(data=df %>% dplyr::select(-Exp_Group),
+             c(-Player_Number),
+             names_to="Time",
+             values_to="Value")
+ggplot(data=df,
+       aes(x=Time,y=Player_Number,fill=Value)) +
+  geom_tile()
+```
+
+```{r}
+df <- read.csv('C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\Cow_Activity_Heatmap_Post_Training_Period.csv')
+df[is.na(df)] <- 0
+df$Player_Number <- as.character(df$Player_Number)
+
+df <- pivot_longer(data=df,
+             c(-Player_Number,-Exp_Group),
+             names_to="Time",
+             values_to="Value")
+p <- ggplot(data=df,
+       aes(x=Time,y=Player_Number,fill=Value)) +
+  geom_tile()
+p + facet_grid(Exp_Group ~ .)
+```
+```{r}
+df <- read.csv('C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\Cow_Activity_Heatmap_Training_Period_Only.csv')
+df[is.na(df)] <- 0
+df$Player_Number <- as.character(df$Player_Number)
+
+
+for_list <- unique(df$Exp_Group)
+
+for (x in for_list) {
+  print(x)
+  df.subset <- pivot_longer(data=df %>% subset(Exp_Group==x),
+             c(-Player_Number,-Exp_Group),
+             names_to="Time",
+             values_to="Value")
+  
+  p <- ggplot(data=df.subset,
+       aes(x=Time,y=Player_Number,fill=Value)) +
+  geom_tile(color="gray") +
+    theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+  
+  ggsave(filename=paste("C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\",x,"_training_plot.jpg",sep=''),plot=p)
+}
+
+df <- read.csv('C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\Cow_Activity_Heatmap_Post_Training_Period.csv')
+df[is.na(df)] <- 0
+df$Player_Number <- as.character(df$Player_Number)
+
+
+for_list <- unique(df$Exp_Group)
+
+for (x in for_list) {
+  print(x)
+  df.subset <- pivot_longer(data=df %>% subset(Exp_Group==x),
+             c(-Player_Number,-Exp_Group),
+             names_to="Time",
+             values_to="Value")
+  
+  p <- ggplot(data=df.subset,
+       aes(x=Time,y=Player_Number,fill=Value)) +
+  geom_tile(color="gray") +
+    theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+  
+  ggsave(filename=paste("C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\",x,"_post_training_plot.jpg",sep=''),plot=p)
+}
+```
+
+```{r}
+
+
+```
+
+```{r}
+df <- read.csv('C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\Cow_Activity_Heatmap_Training_Period_Only.csv')
+df[is.na(df)] <- 0
+df <- pivot_longer(data=df %>% dplyr::select(-Exp_Group),
+             c(-Player_Number),
+             names_to="Time",
+             values_to="Value")
+
+ggplot(data=df,
+       aes(x=Time,y=Player_Number,fill=Value)) +
+  geom_tile()
+```
+
+
+
+
+```{r}
+df <- df %>% dplyr::select(-c(Player_Number,Exp_Group))
+df
+```
+
+```{r}
+as.matrix(df) %>% heatmap(scale="column", Colv=NA,Rowv=NA)
+```
+
+
+
+```{r}
+# Dummy data
+x <- LETTERS[1:20]
+y <- paste0("var", seq(1,20))
+data <- expand.grid(X=x, Y=y)
+data$Z <- runif(400, 0, 5)
+ 
+# Heatmap 
+ggplot(data, aes(X, Y, fill= Z)) + 
+  geom_tile()
+```

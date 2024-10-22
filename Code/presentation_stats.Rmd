@@ -1,0 +1,546 @@
+---
+title: '20240102'
+author: "Thomas FitzGerald"
+date: "2024-02-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(readxl)
+library(dplyr)
+library(plotly)
+library(ggplot2)
+library(stats)
+library(multcomp)
+library(emmeans)
+library(lsmeans)
+
+library(stringr)
+library(lubridate)
+```
+
+This was used to generate data for the poster presentation at the ADSA conference on 6/19/2024.
+
+```{r}
+df.ref <- read.csv('C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\animal_ref.csv')
+
+df.weather <- read.csv('C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\weather_2.csv') %>%
+  mutate(Date=as.POSIXct(DateTime,format=c("%m/%d/%Y"))) %>%
+  mutate(Avg.temperature = (High.temperature+Low.temperature)/2) %>%
+  dplyr::select(Date,Avg.temperature) 
+
+df.summary <- read.csv('C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\Pulse Data\\pulse_dense_results.csv')
+df.summary$HR_avg_bpm <- floor(df.summary$HR_avg_bpm)
+df.summary <- df.summary %>%
+  mutate(Experiment_Group = case_when(cow_id %in% subset(df.ref,Experiment_Group=='Group_1')$animal_number ~ 'Group_1',
+                       cow_id %in% subset(df.ref,Experiment_Group=='Group_2')$animal_number ~ 'Group_2')) %>%
+  mutate(Group = case_when(cow_id %in% subset(df.ref,Treatment_Group=='TR')$animal_number ~ 'TR',
+                           cow_id %in% subset(df.ref,Treatment_Group=='UTR')$animal_number ~ 'UTR')) %>%
+  relocate(cow_id,Experiment_Group,Group,Time_Period,Date,HR_avg_bpm) %>%
+  mutate(Time_Period=str_replace(Time_Period, 'pre-train','Pre-Training')) %>%
+  mutate(Time_Period=str_replace(Time_Period, 'training','Training')) %>%
+  mutate(Time_Period=str_replace(Time_Period, 'post-train','Post-Training')) %>%
+  #subset(Time_Period!='training') %>%
+  arrange(cow_id,Date)
+
+df.milk <- read.csv('C:/Users/Thoma/OneDrive/Desktop/Farm_1/EAF2AgSourceMilk/EAF_All.csv') %>%
+  subset(butterfat != 'Short Sample') %>%
+  subset(cow_id %in% df.ref$animal_number) %>%
+  mutate(Date=as.Date(date, format='%m/%d/%Y')) %>%
+  #mutate(Date=as.Date(date2)) %>%
+  dplyr::select(-c(date,date2)) %>%
+  mutate(Experiment_Group = case_when(cow_id %in% subset(df.ref,Experiment_Group=='Group_1')$animal_number ~ 'Group_1',
+                       cow_id %in% subset(df.ref,Experiment_Group=='Group_2')$animal_number ~ 'Group_2')) %>%
+  mutate(Group = case_when(cow_id %in% subset(df.ref,Treatment_Group=='TR')$animal_number ~ 'TR',
+                           cow_id %in% subset(df.ref,Treatment_Group=='UTR')$animal_number ~ 'UTR')) %>%
+  mutate(Time_Period = case_when(Date >= '2023-08-28' & Date <= '2023-08-29' ~ 'pre-train',
+                                 Date >= '2023-09-06' & Date <= '2023-09-08' ~'training',
+                                 Date >= '2023-09-11' & Date <= '2023-09-14' ~ 'post-train',
+                                 
+                                 Date >= '2023-09-25' & Date <= '2023-09-26' ~ 'pre-train',
+                                 Date >= '2023-10-03' & Date <= '2023-10-05' ~'training',
+                                 Date >= '2023-10-06' & Date <= '2023-10-17' ~ 'post-train')) %>%
+  mutate(butterfat = as.double(butterfat)) %>%
+  subset(!is.na(Time_Period)) %>%
+  relocate(Date,Time_Period,Group) %>%
+  relocate(cow_id,Experiment_Group,Group,Time_Period,Date) %>%  
+  group_by(cow_id,Experiment_Group,Group,Time_Period,Date) %>% 
+  summarize(butterfat=mean(butterfat,is.na=T),protein=mean(protein,is.na=T),lactose=mean(lactose,is.na=T),mun=mean(mun,is.na=T)) %>%
+  arrange(cow_id,Date)
+
+df.milk2 <- read.csv('C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\BoviSync_2024-02-13 11_39.csv') %>%
+  mutate(cow_id=AnEar) %>%
+  subset(cow_id %in% df.ref$animal_number) %>%
+  mutate(Date=as.Date(ShiftDate, format('%Y-%m-%d'))) %>%
+  mutate(Experiment_Group = case_when(cow_id %in% subset(df.ref,Experiment_Group=='Group_1')$animal_number ~ 'Group_1',
+                       cow_id %in% subset(df.ref,Experiment_Group=='Group_2')$animal_number ~ 'Group_2')) %>%
+  mutate(Group = case_when(cow_id %in% subset(df.ref,Treatment_Group=='TR')$animal_number ~ 'TR',
+                           cow_id %in% subset(df.ref,Treatment_Group=='UTR')$animal_number ~ 'UTR')) %>%
+  mutate(Time_Period = case_when(Date >= '2023-08-28' & Date <= '2023-09-05' ~ 'pre-train',
+                                 Date >= '2023-09-06' & Date <= '2023-09-08' ~'training',
+                                 Date >= '2023-09-11' & Date <= '2023-09-14' ~ 'post-train',
+                                 
+                                 Date >= '2023-10-01' & Date <= '2023-10-02' ~ 'pre-train',
+                                 Date >= '2023-10-03' & Date <= '2023-10-05' ~'training',
+                                 Date >= '2023-10-06' & Date <= '2023-10-17' ~ 'post-train')) %>%
+  subset(!is.na(Time_Period)) %>%
+  #subset(Time_Period!='train') %>%
+  relocate(Experiment_Group,Group,Time_Period,Date,cow_id,DayTMilk) %>%  
+  dplyr::select(c(Experiment_Group,Group,Time_Period,Date,cow_id,DayTMilk,DIM)) %>%
+  arrange(cow_id,Date)
+
+df.milk.combined <- merge(df.milk,df.milk2) %>%
+  mutate(milk_yield_kg = (DayTMilk/2.2)) %>%
+  mutate(butterfat_kg = (butterfat*milk_yield_kg)/100) %>%
+  mutate(protein_kg = (protein*milk_yield_kg)/100) %>%
+  mutate(lactose_kg = (lactose*milk_yield_kg)/100) %>%
+  dplyr::select(cow_id,Date,Experiment_Group,Group,Time_Period,milk_yield_kg,butterfat_kg,protein_kg,lactose_kg,butterfat,protein,lactose,mun) %>%
+  group_by(cow_id,Date,Experiment_Group,Group,Time_Period) %>%
+  summarize(yield=mean(milk_yield_kg),
+            butterfat_kg=mean(butterfat_kg),
+            protein_kg=mean(protein_kg),
+            lactose_kg=mean(lactose_kg),
+            butterfat=mean(butterfat),
+            protein=mean(protein),
+            lactose=mean(lactose),
+            mun=mean(mun)) %>%
+  mutate(Time_Period=str_replace(Time_Period, 'pre-train','Pre-Training')) %>%
+  mutate(Time_Period=str_replace(Time_Period, 'training','Training')) %>%
+  mutate(Time_Period=str_replace(Time_Period, 'post-train','Post-Training')) %>%
+  arrange(cow_id,Experiment_Group,Time_Period,Group)
+
+df.bovisync <- read.csv('C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\BoviSync_2024-02-12 16_50.csv') %>%
+  mutate(RFID_backup=paste('000000000',RFID_backup,sep='')) %>%
+  dplyr::select(IDL,RFID_backup,Group,Milk7)
+
+df.greenfeed.rolling <- read.csv('C:/Users/Thoma/OneDrive/Desktop/Farm_1/GreenFeed_rolling_averages.csv') %>%
+  subset(farmName!='QC_Test ') %>%
+  mutate(Date=as.Date(dateStart, format='%m/%d/%Y')) %>%
+  mutate(goodDataDuration=
+    as.integer(substr(goodDataDuration,0,1))*3600 +
+    as.integer(substr(goodDataDuration,3,4))*60 +
+    as.integer(substr(goodDataDuration,6,7))) %>%
+  mutate(Time_Period = case_when(Experiment_Group=='Group_1' & Date >= '2023-09-03' & Date <= '2023-09-05' ~ 'pre-train',
+                                 Experiment_Group=='Group_1' & Date >= '2023-09-06' & Date <= '2023-09-08' ~'training',
+                                 Experiment_Group=='Group_1' & Date >= '2023-09-07'                        ~ 'post-train',
+                                 
+                                 Experiment_Group=='Group_2'                        & Date <= '2023-10-03' ~ 'pre-train',
+                                 Experiment_Group=='Group_2' & Date >= '2023-10-03' & Date <= '2023-10-05' ~'training',
+                                 Experiment_Group=='Group_2' & Date >= '2023-10-04' & Date <= '2023-10-17' ~ 'post-train')) %>%
+  subset(!is.na(Time_Period)) %>%
+  subset(!is.na(Group)) %>%
+  subset(!is.na(Experiment_Group)) %>%
+  subset(Group %in% c('TR','UTR')) %>%
+  subset(Experiment_Group %in% c('Group_1','Group_2')) %>%
+  mutate(test_var=paste(Experiment_Group,Time_Period,Group,sep=' ')) %>%
+  mutate(CO2=CO2MassFlow) %>%
+  mutate(CH4=CH4MassFlow) %>%
+  mutate(Time_Period=str_replace(Time_Period, 'pre-train','Pre-Training')) %>%
+  mutate(Time_Period=str_replace(Time_Period, 'training','Training')) %>%
+  mutate(Time_Period=str_replace(Time_Period, 'post-train','Post-Training')) %>%
+  dplyr::select(RFID_backup,cow_id,Date,Experiment_Group,Group,Time_Period,CO2,CH4,test_var,goodDataDuration,durationCount) %>%
+  relocate(cow_id,Experiment_Group,Group,Time_Period,Date,CO2,CH4) %>%
+  arrange(cow_id,Date)
+
+df.greenfeed.rolling.means <- df.greenfeed.rolling %>%
+  group_by(cow_id,Experiment_Group,Group,Time_Period) %>%
+  summarize(CO2.mean=mean(CO2),
+            CH4.mean=mean(CH4),
+            goodDataDuration.mean=mean(goodDataDuration),
+            durationCount.mean=mean(durationCount))
+
+#df.greenfeed.rolling$cow_id <- df.bovisync$IDL[match(df.greenfeed.rolling$RFID_backup,df.bovisync$RFID_backup)]
+
+df.milk.combined.averages <- df.milk.combined %>% 
+     group_by(cow_id,Experiment_Group,Group,Time_Period) %>% 
+     summarize(yield=mean(yield))
+
+df.greenfeed.averages <- df.greenfeed.rolling %>%  
+      group_by(cow_id,Experiment_Group,Group,Time_Period) %>%
+      summarize(CH4=mean(CH4))
+
+df.weight <- read.csv('C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\cow_bodyweight.csv') %>% 
+  mutate(Date=as.Date(Date, format='%m/%d/%Y')) %>%
+  mutate(cow_id=AnEar) %>%
+  group_by(cow_id) %>%
+  summarize(Weight=mean(Weight,na.rm=T)/2.2) %>%
+  mutate(Experiment_Group = case_when(cow_id %in% subset(df.ref,Experiment_Group=='Group_1')$animal_number ~ 'Group_1',
+                       cow_id %in% subset(df.ref,Experiment_Group=='Group_2')$animal_number ~ 'Group_2')) %>%
+  mutate(Group = case_when(cow_id %in% subset(df.ref,Treatment_Group=='TR')$animal_number ~ 'TR',
+                           cow_id %in% subset(df.ref,Treatment_Group=='UTR')$animal_number ~ 'UTR'))
+
+df.weight <- merge(df.weight,df.milk2 %>% group_by(cow_id) %>% summarize(DIM=mean(DIM)))
+
+df.efficiency <- merge(merge(df.milk.combined.averages,df.greenfeed.averages),df.weight) %>%
+  mutate(CH4_BW=CH4/Weight) %>%
+  mutate(yield_bw=yield/Weight) %>%
+  mutate(CH4_yield=CH4/yield)
+
+```
+
+This code blocks crushes all pre-training and training together
+```{r}
+df.summary <- df.summary %>% mutate(Time_Period=str_replace(Time_Period,'Pre-Training','Training'))
+df.greenfeed.rolling <- df.greenfeed.rolling %>% mutate(Time_Period=str_replace(Time_Period,'Pre-Training','Training'))
+df.milk.combined <- df.milk.combined %>% mutate(Time_Period=str_replace(Time_Period,'Pre-Training','Training'))
+
+```
+
+
+
+This code block converts pre-training response variables to covariates.
+```{r}
+df.hr.nopt <- merge(df.summary %>% subset(Time_Period!='Pre-Training'),
+df.summary %>% subset(Time_Period=='Pre-Training') %>%
+  group_by(cow_id) %>%
+  summarize(pt_HR_avg_bpm=mean(HR_avg_bpm)))
+
+df.milk.combined.nopt <- merge(df.milk.combined %>% subset(Time_Period!='Pre-Training'),
+df.milk.combined %>% subset(Time_Period=='Pre-Training') %>%
+  group_by(cow_id) %>%
+  summarize(pt_yield=mean(yield),
+pt_butterfat_kg=mean(butterfat_kg),
+pt_protein_kg=mean(protein_kg),
+pt_lactose_kg=mean(lactose_kg),
+pt_butterfat=mean(butterfat),
+pt_protein=mean(protein),
+pt_lactose=mean(lactose),
+pt_mun=mean(mun))
+)
+```
+
+
+```{r}
+
+print('Ref')
+table(df.ref$Treatment_Group, df.ref$Experiment_Group)
+print('Heart_Rate')
+table(df.summary$Time_Period,df.summary$Group, df.summary$Experiment_Group)
+print('Metabolism')
+table(df.greenfeed.rolling$Time_Period,df.greenfeed.rolling$Group, df.greenfeed.rolling$Experiment_Group)
+# print('Metabolism_Averages')
+# table(df.greenfeed.averages$Time_Period,df.greenfeed.averages$Group, df.greenfeed.averages$Experiment_Group)
+print('Milk')
+table(df.milk$Time_Period,df.milk$Group, df.milk$Experiment_Group)
+table(df.milk2$Time_Period,df.milk2$Group, df.milk2$Experiment_Group)
+table(df.milk.combined$Time_Period,df.milk.combined$Group, df.milk.combined$Experiment_Group)
+table(df.milk.combined.nopt$Time_Period,df.milk.combined.nopt$Group, df.milk.combined.nopt$Experiment_Group)
+# print('Milk_Averages')
+# table(df.milk.combined.averages$Time_Period,df.milk.combined.averages$Group, df.milk.combined.averages$Experiment_Group)
+print('Efficiency')
+table(df.efficiency$Time_Period,df.efficiency$Group, df.efficiency$Experiment_Group)
+```
+```{r}
+merge(df.weight %>%
+  group_by(Experiment_Group,Group) %>%
+  summarize(Weight=mean(Weight)),
+df.milk2 %>%
+  group_by(Experiment_Group,Group) %>%
+  summarize(Avg_DIM=mean(DIM)))
+```
+
+```{r}
+print_experiment_results <- function(df,var.name,nopt=FALSE){
+  if(nopt){
+    covar.name <- paste('pt_',var.name,sep='')
+    df <- df %>% mutate(Group=as.character(Group),Time_Period=as.character(Time_Period)) %>% rename(var = var.name,covar = covar.name)
+  }else{
+    df <- df %>% mutate(Group=as.character(Group),Time_Period=as.character(Time_Period)) %>% rename(var = var.name)
+  }
+  
+  print(paste('SD,SEM',
+              sd(df$var),
+  sd(df$var)/sqrt(nrow(df)),
+  sep=' '))
+  
+  print(paste(('pre-train'),
+  mean(subset(df,Group=='UTR'&Time_Period %in% c('pre-train','Pre-Training'))$var,na.rm=T),
+  mean(subset(df,Group=='TR'&Time_Period %in% c('pre-train','Pre-Training'))$var,na.rm=T),sep=' '))
+  
+  print(paste(('training'),
+  mean(subset(df,Group=='UTR'&Time_Period %in% c('training','Training'))$var),
+  mean(subset(df,Group=='TR'&Time_Period%in% c('training','Training'))$var),sep=' '))
+  
+  print(paste(('post-train'),
+  mean(subset(df,Group=='UTR'&Time_Period %in% c('post-train','Post-Training'))$var),
+  mean(subset(df,Group=='TR'&Time_Period %in% c('post-train','Post-Training'))$var),sep=' '))
+  
+  #try(print(t.test(data=df %>% subset(Time_Period %in% c('pre-train','Pre-Training')),var~Group)))
+  #try(print(t.test(data=df %>% subset(Time_Period %in% c('training','Training')),var~Group)))
+  #try(print(t.test(data=df %>% subset(Time_Period %in% c('post-train','Post-Training')),var~Group)))
+  
+  if(nopt){
+    print(anova(lm(data=df,formula = var ~ Group + Experiment_Group + Time_Period + covar + Group*Time_Period, contrasts = list(Time_Period = 'contr.treatment'))))
+  } else{
+    print(anova(lm(data=df,formula = var ~ Group + Experiment_Group + Time_Period + Group*Time_Period, contrasts = list(Time_Period = 'contr.treatment'))))
+  }
+}
+```
+
+
+```{r}
+print_experiment_results_2 <- function(df,var.name){
+  df <- df %>% rename(response = var.name)
+  print(paste('--------------------',var.name,'--------------------',sep=''))
+  lm.obj <- lm(data=df,formula = response ~ Group + Time_Period + Group*Time_Period, contrasts = list(Time_Period = 'contr.treatment'))
+  print('--------------------ANOVA--------------------')
+  print(anova(lm.obj))
+  print('--------------------Contrasts--------------------')
+  print(contrast(emmeans(lm.obj, ~ Time_Period + Group), method='dunnett'))
+  print('--------------------Model Summary--------------------')
+  print(summary(lm.obj))
+  print(lsmeans(lm.obj, c('Experiment_Group, Group','Time_Period')))
+}
+```
+```{r}
+geom_split_violin <- function(mapping = NULL,
+                              data = NULL,
+                              stat = "ydensity",
+                              position = "identity",
+                              ...,
+                              draw_quantiles = NULL,
+                              trim = TRUE,
+                              scale = "area",
+                              na.rm = FALSE,
+                              show.legend = NA,
+                              inherit.aes = TRUE) {
+  ggplot2::layer(
+    data = data, mapping = mapping, stat = stat, geom = GeomSplitViolin,
+    position = position, show.legend = show.legend, inherit.aes = inherit.aes,
+    params = list(
+      trim = trim, scale = scale, draw_quantiles = draw_quantiles,
+      na.rm = na.rm, ...
+    )
+  )
+}
+
+#' @format NULL
+#' @usage NULL
+GeomSplitViolin <- ggplot2:::ggproto("GeomSplitViolin",
+                                     ggplot2::GeomViolin,
+                                     draw_group = function(self, data, ..., draw_quantiles = NULL) {
+                                       data <- transform(data, xminv = x - violinwidth * (x - xmin), xmaxv = x + violinwidth * (xmax - x))
+                                       grp <- data[1, "group"]
+                                       newdata <- plyr::arrange(transform(data, x = if (grp %% 2 == 1) xminv else xmaxv), if (grp %% 2 == 1) y else -y)
+                                       newdata <- rbind(newdata[1, ], newdata, newdata[nrow(newdata), ], newdata[1, ])
+                                       newdata[c(1, nrow(newdata) - 1, nrow(newdata)), "x"] <- round(newdata[1, "x"])
+                                       if (length(draw_quantiles) > 0 & !scales::zero_range(range(data$y))) {
+                                         stopifnot(all(draw_quantiles >= 0), all(draw_quantiles <=
+                                                                                   1))
+                                         quantiles <- ggplot2:::create_quantile_segment_frame(data, draw_quantiles)
+                                         aesthetics <- data[rep(1, nrow(quantiles)), setdiff(names(data), c("x", "y")), drop = FALSE]
+                                         aesthetics$alpha <- rep(1, nrow(quantiles))
+                                         both <- cbind(quantiles, aesthetics)
+                                         quantile_grob <- GeomPath$draw_panel(both, ...)
+                                         ggplot2:::ggname("geom_split_violin", grid::grobTree(GeomPolygon$draw_panel(newdata, ...), quantile_grob))
+                                       }
+                                       else {
+                                         ggplot2:::ggname("geom_split_violin", GeomPolygon$draw_panel(newdata, ...))
+                                       }
+                                     }
+)
+
+```
+
+```{r}
+print(paste(sd(df.weight$Weight)/sqrt(nrow(df.weight)),sep=' '))
+print(paste(sd(df.weight$DIM)/sqrt(nrow(df.weight)),sep=' '))
+t.test(subset(df.weight,Group=='TR')$Weight,subset(df.weight,Group=='UTR')$Weight)
+t.test(subset(df.weight,Group=='TR')$DIM,subset(df.weight,Group=='UTR')$DIM)
+```
+
+```{r}
+print_experiment_results(df.summary,'HR_avg_bpm')
+print_experiment_results_2(df.summary,'HR_avg_bpm')
+```
+
+Co2/Methane
+```{r}
+print_experiment_results(df.greenfeed.rolling,'CO2')
+print_experiment_results_2(df.greenfeed.rolling,'CO2')
+```
+```{r}
+print_experiment_results(df.greenfeed.rolling,'CH4')
+print_experiment_results_2(df.greenfeed.rolling,'CH4')
+```
+Milk Output
+```{r}
+print_experiment_results(df.milk.combined,'yield')
+print_experiment_results_2(df.milk.combined,'yield')
+```
+```{r}
+print_experiment_results(df.milk.combined,'butterfat_kg')
+print_experiment_results_2(df.milk.combined,'butterfat_kg')
+```
+```{r}
+print_experiment_results(df.milk.combined,'protein_kg')
+print_experiment_results_2(df.milk.combined,'protein_kg')
+```
+```{r}
+print_experiment_results(df.milk.combined,'lactose_kg')
+print_experiment_results_2(df.milk.combined,'lactose_kg')
+```
+Milk Composition (Lactose,Protein,Butterfat,mun)
+
+```{r}
+print_experiment_results(df.milk,'butterfat')
+print_experiment_results_2(df.milk,'butterfat')
+```
+```{r}
+print_experiment_results(df.milk,'protein')
+print_experiment_results_2(df.milk,'protein')
+```
+```{r}
+print_experiment_results(df.milk,'lactose')
+print_experiment_results_2(df.milk,'lactose')
+```
+```{r}
+print_experiment_results(df.milk,'mun')
+print_experiment_results_2(df.milk,'mun')
+```
+
+```{r}
+print_experiment_results(df.efficiency,'CH4_BW')
+print_experiment_results_2(df.efficiency,'CH4_BW')
+```
+```{r}
+print_experiment_results(df.efficiency,'yield_bw')
+print_experiment_results_2(df.efficiency,'yield_bw')
+```
+
+```{r}
+print_experiment_results(df.efficiency,'CH4_yield')
+print_experiment_results_2(df.efficiency,'CH4_yield')
+```
+
+```{r}
+print_experiment_results(df.greenfeed.rolling,'goodDataDuration')
+print_experiment_results_2(df.greenfeed.rolling,'goodDataDuration')
+```
+
+```{r}
+print_experiment_results(df.greenfeed.rolling,'durationCount')
+```
+
+```{r}
+ggplot(data=df.summary %>% 
+         mutate(Time_Period= str_replace(Time_Period, 'Pre-Training','Training')) %>%
+         mutate(Time_Period = factor(Time_Period, levels=c('Pre-Training','Training','Post-Training'))) %>% 
+         mutate(Group= factor(Group,levels=c('UTR','TR'))) ,aes(x=Time_Period)) +  
+  geom_split_violin(aes(x=Time_Period,y=HR_avg_bpm,fill=Group)) + 
+  scale_fill_brewer(palette="Set2") +
+  ylab("Daily Avg. Heart Rate (bpm)") +
+  xlab("Time Period") +
+  theme_classic() +
+  theme(axis = element_text(size=12),
+        axis.text.x = element_text(size = 16),
+        axis.text.y = element_text(size = 16),
+        axis.line=element_line(size=2),
+        legend.position='none')
+```
+```{r}
+ggplot(data=df.summary %>% 
+         subset(Experiment_Group=='Group_1') %>%
+         mutate(Time_Period = factor(Time_Period, levels=c('Pre-Training','Training','Post-Training'))) %>% 
+         mutate(Group= factor(Group,levels=c('UTR','TR'))) ,aes(x=Time_Period)) +  
+  geom_split_violin(aes(x=Time_Period,y=HR_avg_bpm,fill=Group)) + 
+  scale_fill_brewer(palette="Set1")
+```
+```{r}
+ggplot(data=df.summary %>% 
+         subset(Experiment_Group=='Group_2') %>%
+         mutate(Time_Period = factor(Time_Period, levels=c('Pre-Training','Training','Post-Training'))) %>% 
+         mutate(Group= factor(Group,levels=c('UTR','TR'))) ,aes(x=Time_Period)) +  
+  geom_split_violin(aes(x=Time_Period,y=HR_avg_bpm,fill=Group)) + 
+  scale_fill_brewer(palette="Set1")
+```
+```{r}
+ggplot(data=df.greenfeed.rolling %>% 
+         mutate(Time_Period = factor(Time_Period, levels=c('Pre-Training','Training','Post-Training'))) %>% 
+         mutate(Group= factor(Group,levels=c('UTR','TR'))) ,aes(x=Time_Period)) +  
+  geom_split_violin(aes(x=Time_Period,y=CO2,fill=Group)) + 
+  scale_fill_brewer(palette="Set1") +
+  ylab("Co2 output (g/day)") +
+  xlab("Time Period") +
+  theme_classic() +
+  theme(legend.position='none')
+```
+
+```{r}
+ggplot(data=df.greenfeed.rolling %>% 
+         mutate(Time_Period = factor(Time_Period, levels=c('Pre-Training','Training','Post-Training'))) %>% 
+         mutate(Group= factor(Group,levels=c('UTR','TR'))) ,aes(x=Time_Period)) +  
+  geom_split_violin(aes(x=Time_Period,y=CH4,fill=Group)) + 
+  scale_fill_brewer(palette="Set2") +
+  ylab("CH4 output (g/day)") +
+  xlab("Time Period") +
+  theme_classic() +
+  theme(axis = element_text(size=12),
+        axis.text.x = element_text(size = 16),
+        axis.text.y = element_text(size = 16),
+        axis.line=element_line(size=2),
+        legend.position='none')
+```
+```{r}
+ggplot(data=df.greenfeed.rolling %>% 
+         mutate(Time_Period = factor(Time_Period, levels=c('Pre-Training','Training','Post-Training'))) %>% 
+         mutate(Group= factor(Group,levels=c('UTR','TR'))) ,aes(x=Time_Period)) +  
+  geom_split_violin(aes(x=Time_Period,y=durationCount,fill=Group)) + 
+  scale_fill_brewer(palette="Set2") +
+  ylab("Visits per Day") +
+  xlab("Time Period") +
+  theme_classic() +
+  theme(legend.position='none')
+```
+```{r}
+ggplot(data=df.efficiency %>% mutate(Time_Period=factor(Time_Period,levels=c('Training','Post-Training'))),
+  aes(x=Time_Period)) +  
+  
+  geom_split_violin(aes(x=Time_Period,y=yield_bw,fill=Group)) + 
+  scale_fill_brewer(palette="Set2") +
+  ylab("Milk Efficiency (kg yield/BW)") +
+  xlab("Time Period") +
+  theme_classic() +
+  theme(axis = element_text(size=12),
+        axis.text.x = element_text(size = 16),
+        axis.text.y = element_text(size = 16),
+        axis.line=element_line(size=2),
+        legend.position='none')
+```
+```{r}
+ggplot(data=subset(df.greenfeed.rolling,Time_Period=='Post-Training')) +  
+  geom_split_violin(aes(x=Time_Period,y=durationCount,fill=Group)) + 
+  scale_fill_brewer(palette="Set2") +
+  ylab("Visits per Day") +
+  xlab("Time Period") +
+  theme_classic() +
+  theme(axis = element_text(size=12),
+        axis.text.x = element_text(size = 16),
+        axis.text.y = element_text(size = 16),
+        axis.line=element_line(size=2),
+        legend.position='none')
+```
+```{r}
+ggplot(merge(df.summary %>% mutate(Date=as.Date(Date, format='%m/%d/%Y')),df.weather %>% mutate(Date=as.Date(Date))), aes(x=Avg.temperature,y=HR_avg_bpm, color=Group)) +
+  geom_point() + 
+  scale_color_brewer(palette="Set1")
+
+cor(df.merged$Avg.temperature,df.merged$HR_avg_bpm)
+cor(subset(df.merged, Group=='UTR')$Avg.temperature,subset(df.merged, Group=='UTR')$HR_avg_bpm)
+cor(subset(df.merged, Group=='TR')$Avg.temperature,subset(df.merged, Group=='TR')$HR_avg_bpm)
+```
+
+```{r}
+print_experiment_results(df.hr.nopt,'HR_avg_bpm',TRUE)
+lm.obj <- lm(data=df.hr.nopt, HR_avg_bpm ~ Group + Experiment_Group + Time_Period + pt_HR_avg_bpm + Group*Time_Period)
+summary(lm.obj)
+```
+```{r}
+print_experiment_results(df.milk.combined.nopt,'yield',TRUE)
+print(anova(lm(data=df.milk.combined.nopt,formula = yield ~ Group + pt_yield + Group*Time_Period, contrasts = list(Time_Period = 'contr.treatment'))))
+lm.obj <- lm(data=df.milk.combined.nopt, butterfat ~ Group + pt_butterfat)
+summary(lm.obj)
+lm.obj <- lm(data=df.milk.combined.nopt, butterfat ~ Group + Experiment_Group + pt_butterfat)
+summary(lm.obj)
+```

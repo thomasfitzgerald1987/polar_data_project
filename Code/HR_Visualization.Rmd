@@ -1,0 +1,122 @@
+---
+title: "Average_HR_Visualization"
+author: "Thomas FitzGerald"
+date: "2024-05-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#library(meteoForecast)
+library(tidyverse)
+library(readxl)
+library(dplyr)
+library(plotly)
+library(ggplot2)
+library(ggridges)
+library(stats)
+library(multcomp)
+library(emmeans)
+library(lsmeans)
+
+library(stringr)
+library(lubridate)
+```
+
+```{r}
+df.weather <- read.csv('C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\weather.csv')
+df.hr <- read.csv('C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\cow_HR_avg_bpm_3.csv')
+```
+
+
+```{r}
+df.weather <- df.weather %>%
+  mutate(Date=as.POSIXct(Date,format=c("%m/%d/%Y")))
+df.hr <- df.hr %>%
+  mutate(Date=as.POSIXct(Date,format=c("%m/%d/%Y")))
+df.hr %>% arrange(Date)
+```
+```{r}
+#df.weather %>% mutate(Min=((Min-32)*(5/9)),
+                           #Avg=((Avg-32)*(5/9)),
+                           #Max=((Max-32)*(5/9)))
+
+ggplot(data=df.weather %>% mutate(Min=((Min-32)*(5/9)),
+                           Avg=((Avg-32)*(5/9)),
+                           Max=((Max-32)*(5/9))), aes(x=Date)) +
+  geom_smooth(aes(y=Avg),se=F) +
+  geom_point(aes(y=Avg),size=3) +
+  geom_segment(aes(x=Date,xend=Date,y=Min,yend=Max),linetype='dashed') + #Range
+  geom_segment(aes(x=Date-hours(6),xend=Date+hours(6),y=Min,yend=Min)) + #MinLine
+  geom_segment(aes(x=Date-hours(6),xend=Date+hours(6),y=Max,yend=Max)) + #MaxLine
+  geom_vline(xintercept=as.POSIXct('2024-10-04'), linetype='dotted') + 
+  geom_vline(xintercept=as.POSIXct('2024-10-07'), linetype='dotted') +
+  ylab("Temperature Range(C)") +
+  theme_classic()
+  #annotate("text",x=as.Date('2024-10-06'),y=35,label="Training") +
+  #annotate("text",x=as.Date('2024-10-09'),y=35,label="Post-Training")
+```
+
+```{r}
+
+df.hr.UTR <- df.hr %>% subset(Group=='UTR') %>% mutate(Date=Date-hours(3))
+df.hr.TR <- df.hr %>% subset(Group=='TR') %>% mutate(Date=Date+hours(3))
+
+ggplot(data=df.hr, aes(x=Date)) +
+  #geom_smooth(data=df.hr.UTR,aes(y=mean),color="blue",se=F) +
+  #geom_smooth(data=df.hr.UTR,aes(y=mean),color="blue",method=lm) +
+  geom_smooth(data=df.hr.TR,aes(y=mean),color="red",se=F) +
+  geom_smooth(data=df.hr.TR,aes(y=mean),color="red",method=lm) +
+  geom_jitter(data=df.hr.UTR,aes(y=mean),size=2,color="blue",width = 2000) +
+  geom_jitter(data=df.hr.TR,aes(y=mean),size=2,color="red",width = 2000) +
+
+  #geom_segment(aes(x=Date,xend=Date,y=Min,yend=Max),linetype='dashed') +
+  #geom_segment(aes(x=Date-hours(6),xend=Date+hours(6),y=Min,yend=Min)) +
+  #geom_segment(aes(x=Date-hours(6),xend=Date+hours(6),y=Max,yend=Max)) +
+  geom_vline(xintercept=as.POSIXct('2024-10-04'), linetype='dotted') +
+  geom_vline(xintercept=as.POSIXct('2024-10-07'), linetype='dotted') +
+  ylab("Heart Rate (bpm)") +
+  theme_classic()
+  #annotate("text",x=as.Date('2024-10-06'),y=35,label="Training") +
+  #annotate("text",x=as.Date('2024-10-09'),y=35,label="Post-Training")
+```
+
+This is an attempt to use the geom_split_violin across multiple dates.  It doesn't work.
+```{r}
+ggplot(data=df.hr,aes(x=Date)) +
+  geom_split_violin(data=subset(df.hr,Date==as.POSIXct('2023-10-01')),aes(x=Date,y=mean,fill=Group)) +
+  geom_split_violin(data=subset(df.hr,Date==as.POSIXct('2023-10-02')),aes(x=Date,y=mean,fill=Group)) +
+  geom_split_violin(data=subset(df.hr,Date==as.POSIXct('2023-10-03')),aes(x=Date,y=mean,fill=Group))
+```
+Here I use df.hr2 (Categorical date instead of POSIXct) which seems to resolve the issue, aside from dropping 10-6,10-7,and 10-8.  On the downside, it's fugly, and I'm not sure it's much more informative.
+```{r}
+ggplot(data=df.hr2,aes(x=Date)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-01')),aes(x=Date,y=mean,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-02')),aes(x=Date,y=mean,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-03')),aes(x=Date,y=mean,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-04')),aes(x=Date,y=mean,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-05')),aes(x=Date,y=mean,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-06')),aes(x=Date,y=mean,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-07')),aes(x=Date,y=mean,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-08')),aes(x=Date,y=mean,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-09')),aes(x=Date,y=mean,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-10')),aes(x=Date,y=mean,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-11')),aes(x=Date,y=mean,fill=Group))
+```
+
+This is an attempt to use multiple geom_density functions to achieve the same end.  geom_density_ridges appears to be locked to a horizontal view, with no way to adjust height or distance.  I don't think this'll work.
+```{r}
+df.hr2 <- df.hr %>% mutate(Date=as.character(Date))
+ggplot(data=df.hr2,aes(x=mean,y=Date)) +
+  geom_density_ridges()
+```
+```{r}
+df.hr2 <- df.hr %>% mutate(Date=as.character(Date))
+ggplot(data=df.hr2,aes(x=Date,y=mean)) +
+  geom_density(data=subset(df.hr2,Date='2023-10-01'),aes(y=mean))
+```
+
+```{r}
+ggplot(data=df.hr.TR,aes(x=Date,y=mean)) +
+  geom_violin()
+```
+

@@ -1,0 +1,426 @@
+---
+title: "Average_HR_Visualization"
+author: "Thomas FitzGerald"
+date: "2024-05-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#library(meteoForecast)
+library(tidyverse)
+library(readxl)
+library(dplyr)
+library(plotly)
+library(ggplot2)
+library(ggridges)
+library(stats)
+library(multcomp)
+library(emmeans)
+library(lsmeans)
+
+library(stringr)
+library(lubridate)
+```
+
+```{r}
+df.ref <- read.csv('C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\animal_ref.csv')
+
+df.weather <- read.csv('C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\weather_2.csv') %>%
+  mutate(Date=as.POSIXct(DateTime,format=c("%m/%d/%Y"))) %>%
+  mutate(Avg.temperature = (High.temperature+Low.temperature)/2) %>%
+  dplyr::select(Date,Avg.temperature) 
+#https://climatology.nelson.wisc.edu/first-order-station-climate-data/madison-climate/historical-temperatures/
+
+df.hr <- read.csv('C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\Pulse Data\\pulse_dense_results.csv') %>%
+  mutate(Date=as.POSIXct(Date,format=c("%m/%d/%Y"))) %>%
+  mutate(Time_Period=str_replace(Time_Period, 'pre-train','Pre-Training')) %>%
+  mutate(Time_Period=str_replace(Time_Period, 'training','Training')) %>%
+  mutate(Time_Period=str_replace(Time_Period, 'post-train','Post-Training'))
+
+df.hr.long <- read.csv('C:\\Users\\Thoma\\OneDrive\\Desktop\\Farm_1\\Pulse Data\\test_out_2.csv') %>%
+  mutate(read_ratio=det_duration/det_no_read)
+
+df.greenfeed.rolling <- read.csv('C:/Users/Thoma/OneDrive/Desktop/Farm_1/GreenFeed_rolling_averages.csv') %>%
+  subset(farmName!='QC_Test ') %>%
+  mutate(Date=as.Date(dateStart, format='%m/%d/%Y')) %>%
+  mutate(goodDataDuration=
+    as.integer(substr(goodDataDuration,0,1))*3600 +
+    as.integer(substr(goodDataDuration,3,4))*60 +
+    as.integer(substr(goodDataDuration,6,7))) %>%
+  mutate(Time_Period = case_when(Date >= '2023-09-03' & Date <= '2023-09-05' ~ 'pre-train',
+                                 Date >= '2023-09-06' & Date <= '2023-09-08' ~'training',
+                                 Date >= '2023-09-11' & Date <= '2023-09-14' ~ 'post-train',
+                                 
+                                 Date >= '2023-10-01' & Date <= '2023-10-03' ~ 'pre-train',
+                                 Date >= '2023-10-03' & Date <= '2023-10-05' ~'training',
+                                 Date >= '2023-10-06' & Date <= '2023-10-17' ~ 'post-train')) %>%
+  subset(!is.na(Time_Period)) %>%
+  subset(!is.na(Group)) %>%
+  subset(!is.na(Experiment_Group)) %>%
+  subset(Group %in% c('TR','UTR')) %>%
+  subset(Experiment_Group %in% c('Group_1','Group_2')) %>%
+  mutate(test_var=paste(Experiment_Group,Time_Period,Group,sep=' ')) %>%
+  mutate(CO2=CO2MassFlow) %>%
+  mutate(CH4=CH4MassFlow) %>%
+  mutate(Time_Period=str_replace(Time_Period, 'pre-train','Pre-Training')) %>%
+  mutate(Time_Period=str_replace(Time_Period, 'training','Training')) %>%
+  mutate(Time_Period=str_replace(Time_Period, 'post-train','Post-Training')) %>%
+  dplyr::select(RFID_backup,cow_id,Date,Experiment_Group,Group,Time_Period,CO2,CH4,test_var,goodDataDuration,durationCount) %>%
+  relocate(cow_id,Experiment_Group,Group,Time_Period,Date,CO2,CH4) %>%
+  arrange(cow_id,Date)
+
+df.greenfeed.rolling.means <- df.greenfeed.rolling %>%
+  group_by(cow_id,Experiment_Group,Group,Time_Period) %>%
+  summarize(CO2.mean=mean(CO2),
+            CH4.mean=mean(CH4),
+            goodDataDuration.mean=mean(goodDataDuration),
+            durationCount.mean=mean(durationCount))
+```
+
+```{r}
+#df.weather %>% mutate(Min=((Min-32)*(5/9)),
+                           #Avg=((Avg-32)*(5/9)),
+                           #Max=((Max-32)*(5/9)))
+
+ggplot(data=df.weather %>% mutate(Min=((Min-32)*(5/9)),
+                           Avg=((Avg-32)*(5/9)),
+                           Max=((Max-32)*(5/9))), aes(x=Date)) +
+  geom_smooth(aes(y=Avg),se=F) +
+  geom_point(aes(y=Avg),size=3) +
+  geom_segment(aes(x=Date,xend=Date,y=Min,yend=Max),linetype='dashed') + #Range
+  geom_segment(aes(x=Date-hours(6),xend=Date+hours(6),y=Min,yend=Min)) + #MinLine
+  geom_segment(aes(x=Date-hours(6),xend=Date+hours(6),y=Max,yend=Max)) + #MaxLine
+  geom_vline(xintercept=as.POSIXct('2024-10-04'), linetype='dotted') + 
+  geom_vline(xintercept=as.POSIXct('2024-10-07'), linetype='dotted') +
+  ylab("Temperature Range(C)") +
+  theme_classic()
+  #annotate("text",x=as.Date('2024-10-06'),y=35,label="Training") +
+  #annotate("text",x=as.Date('2024-10-09'),y=35,label="Post-Training")
+```
+```{r}
+df.merged <- merge(df.hr,df.weather,by='Date',all.x=TRUE)
+ggplot(df.merged, aes(x=Avg.temperature,y=HR_avg_bpm, color=Group)) +
+  geom_point() + 
+  scale_color_brewer(palette="Set1")
+
+cor(df.merged$Avg.temperature,df.merged$HR_avg_bpm)
+cor(subset(df.merged, Group=='UTR')$Avg.temperature,subset(df.merged, Group=='UTR')$HR_avg_bpm)
+cor(subset(df.merged, Group=='TR ')$Avg.temperature,subset(df.merged, Group=='TR ')$HR_avg_bpm)
+```
+This one looks at the relationships between heart rate and det_no_read, basically, how closely is daily average HR determined by how often the HR monitor gets no reading.  All related measures show very low correlations (between -.2 and .2), which suggests device uptime has little consistent effect on the daily average HR reading.
+```{r}
+cor(df.hr.long$read_ratio,df.hr.long$HR_avg_bpm)
+cor(df.hr.long$det_avg_bpm/df.hr.long$det_duration,df.hr.long$HR_avg_bpm)
+cor(df.hr.long$det_high_bpm/df.hr.long$det_duration,df.hr.long$HR_avg_bpm)
+cor(df.hr.long$det_med_bpm/df.hr.long$det_duration,df.hr.long$HR_avg_bpm)
+cor(df.hr.long$det_low_bpm/df.hr.long$det_duration,df.hr.long$HR_avg_bpm)
+cor(df.hr.long$det_no_read/df.hr.long$det_duration,df.hr.long$HR_avg_bpm)
+```
+```{r}
+df.merged <- merge(df.hr,df.weight,by='cow_id')
+ggplot(df.merged, aes(x=Weight,y=HR_avg_bpm, color=Group.x)) +
+  geom_point() + 
+  scale_color_brewer(palette="Set1")
+
+cor(df.merged$Weight,df.merged$HR_avg_bpm)
+cor(subset(df.merged, Group=='UTR')$Weight,subset(df.merged, Group=='UTR')$HR_avg_bpm)
+cor(subset(df.merged, Group=='TR ')$Weight,subset(df.merged, Group=='TR ')$HR_avg_bpm)
+mean(subset(df.merged, Group=='UTR')$Weight)
+mean(subset(df.merged, Group=='TR ')$Weight)
+```
+
+```{r}
+df.merged <- merge(df.greenfeed.rolling,df.weight,by='cow_id')
+ggplot(df.merged, aes(x=Weight,y=CH4, color=Group.x)) +
+  geom_point() + 
+  scale_color_brewer(palette="Set1")
+
+cor(df.merged$Weight,df.merged$CH4)
+cor(subset(df.merged, Group=='UTR')$Weight,subset(df.merged, Group=='UTR')$CH4)
+cor(subset(df.merged, Group=='TR ')$Weight,subset(df.merged, Group=='TR ')$CH4)
+```
+
+
+```{r}
+df.hr <- subset(df.hr,Experiment_Group=='Group_1')
+df.hr.UTR <- df.hr %>% subset(Group=='UTR') %>% mutate(Date=Date-hours(3))
+df.hr.TR <- df.hr %>% subset(Group=='TR ') %>% mutate(Date=Date+hours(3))
+
+ggplot(data=df.hr, aes(x=Date)) +
+  #geom_smooth(data=df.hr.UTR,aes(y=HR_avg_bpm),color="blue",se=F) +
+  geom_smooth(data=df.hr.UTR,aes(y=HR_avg_bpm),color="blue",method=lm) +
+  #geom_smooth(data=df.hr.TR,aes(y=HR_avg_bpm),color="red",se=F) +
+  geom_smooth(data=df.hr.TR,aes(y=HR_avg_bpm),color="red",method=lm) +
+  geom_jitter(data=df.hr.UTR,aes(y=HR_avg_bpm),size=2,color="blue",width = 2000) +
+  geom_jitter(data=df.hr.TR,aes(y=HR_avg_bpm),size=2,color="red",width = 2000) +
+
+  #geom_segment(aes(x=Date,xend=Date,y=Min,yend=Max),linetype='dashed') +
+  #geom_segment(aes(x=Date-hours(6),xend=Date+hours(6),y=Min,yend=Min)) +
+  #geom_segment(aes(x=Date-hours(6),xend=Date+hours(6),y=Max,yend=Max)) +
+  #geom_vline(xintercept=as.POSIXct('2024-10-04'), linetype='dotted') +
+  #geom_vline(xintercept=as.POSIXct('2024-10-07'), linetype='dotted') +
+  ylab("Heart Rate (bpm)") +
+  theme_classic()
+  #annotate("text",x=as.Date('2024-10-06'),y=35,label="Training") +
+  #annotate("text",x=as.Date('2024-10-09'),y=35,label="Post-Training")
+```
+
+```{r}
+df.hr <- subset(df.hr,Experiment_Group=='Group_2')
+df.hr.UTR <- df.hr %>% subset(Group=='UTR') %>% mutate(Date=Date-hours(3))
+df.hr.TR <- df.hr %>% subset(Group=='TR ') %>% mutate(Date=Date+hours(3))
+
+ggplot(data=df.hr, aes(x=Date)) +
+  #geom_smooth(data=df.hr.UTR,aes(y=HR_avg_bpm),color="blue",se=F) +
+  geom_smooth(data=df.hr.UTR,aes(y=HR_avg_bpm),color="blue",method=lm) +
+  #geom_smooth(data=df.hr.TR,aes(y=HR_avg_bpm),color="red",se=F) +
+  geom_smooth(data=df.hr.TR,aes(y=HR_avg_bpm),color="red",method=lm) +
+  geom_jitter(data=df.hr.UTR,aes(y=HR_avg_bpm),size=2,color="blue",width = 2000) +
+  geom_jitter(data=df.hr.TR,aes(y=HR_avg_bpm),size=2,color="red",width = 2000) +
+
+  #geom_segment(aes(x=Date,xend=Date,y=Min,yend=Max),linetype='dashed') +
+  #geom_segment(aes(x=Date-hours(6),xend=Date+hours(6),y=Min,yend=Min)) +
+  #geom_segment(aes(x=Date-hours(6),xend=Date+hours(6),y=Max,yend=Max)) +
+  #geom_vline(xintercept=as.POSIXct('2024-10-04'), linetype='dotted') +
+  #geom_vline(xintercept=as.POSIXct('2024-10-07'), linetype='dotted') +
+  ylab("Heart Rate (bpm)") +
+  theme_classic()
+  #annotate("text",x=as.Date('2024-10-06'),y=35,label="Training") +
+  #annotate("text",x=as.Date('2024-10-09'),y=35,label="Post-Training")
+```
+
+Here I use df.hr2 (Categorical date instead of POSIXct) which seems to resolve the issue, aside from dropping 10-6,10-7,and 10-8.  On the downside, it's fugly, and I'm not sure it's much more informative.
+```{r}
+df.hr2 <- df.hr %>% mutate(Date=as.character(Date))
+ggplot(data=df.hr2,aes(x=Date)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-09-03')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-09-04')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-09-05')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-09-06')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-09-07')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-09-08')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-09-09')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-09-10')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-09-11')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-09-12')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-09-13')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-01')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-02')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-03')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-04')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-05')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-06')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-07')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-08')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-09')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-10')),aes(x=Date,y=HR_avg_bpm,fill=Group)) +
+  geom_split_violin(data=subset(df.hr2,Date==as.POSIXct('2023-10-11')),aes(x=Date,y=HR_avg_bpm,fill=Group))
+```
+
+These are split on pre-train-post, and read a lot better.  Below are versions for group 1/2 only, and for Co2/MH4.
+```{r}
+ggplot(data=df.hr %>% 
+         mutate(Time_Period = factor(Time_Period, levels=c('Pre-Training','Training','Post-Training'))) %>% 
+         mutate(Group= factor(Group,levels=c('UTR','TR '))) ,aes(x=Time_Period)) +  
+  geom_split_violin(aes(x=Time_Period,y=HR_avg_bpm,fill=Group)) + 
+  scale_fill_brewer(palette="Set2") +
+  ylab("Daily Avg. Heart Rate (bpm)") +
+  xlab("Time Period") +
+  theme_classic() +
+  theme(legend.position='none')
+```
+```{r}
+ggplot(data=df.hr %>% 
+         subset(Experiment_Group=='Group_1') %>%
+         mutate(Time_Period = factor(Time_Period, levels=c('Pre-Training','Training','Post-Training'))) %>% 
+         mutate(Group= factor(Group,levels=c('UTR','TR '))) ,aes(x=Time_Period)) +  
+  geom_split_violin(aes(x=Time_Period,y=HR_avg_bpm,fill=Group)) + 
+  scale_fill_brewer(palette="Set1")
+```
+```{r}
+ggplot(data=df.hr %>% 
+         subset(Experiment_Group=='Group_2') %>%
+         mutate(Time_Period = factor(Time_Period, levels=c('Pre-Training','Training','Post-Training'))) %>% 
+         mutate(Group= factor(Group,levels=c('UTR','TR '))) ,aes(x=Time_Period)) +  
+  geom_split_violin(aes(x=Time_Period,y=HR_avg_bpm,fill=Group)) + 
+  scale_fill_brewer(palette="Set1")
+```
+```{r}
+ggplot(data=df.greenfeed.rolling %>% 
+         mutate(Time_Period = factor(Time_Period, levels=c('Pre-Training','Training','Post-Training'))) %>% 
+         mutate(Group= factor(Group,levels=c('UTR','TR'))) ,aes(x=Time_Period)) +  
+  geom_split_violin(aes(x=Time_Period,y=CO2,fill=Group)) + 
+  scale_fill_brewer(palette="Set1") +
+  ylab("Co2 output (g/day)") +
+  xlab("Time Period") +
+  theme_classic() +
+  theme(legend.position='none')
+```
+```{r}
+ggplot(data=df.greenfeed.rolling.means %>% 
+         mutate(Time_Period = factor(Time_Period, levels=c('Pre-Training','Training','Post-Training'))) %>% 
+         mutate(Group= factor(Group,levels=c('UTR','TR'))) ,aes(x=Time_Period)) +  
+  geom_split_violin(aes(x=Time_Period,y=CO2.mean,fill=Group)) + 
+  scale_fill_brewer(palette="Set1") +
+  ylab("Co2 output (g/day)") +
+  xlab("Time Period") +
+  theme_classic() +
+  theme(legend.position='none')
+```
+```{r}
+ggplot(data=df.greenfeed.rolling %>% 
+         mutate(Time_Period = factor(Time_Period, levels=c('Pre-Training','Training','Post-Training'))) %>% 
+         mutate(Group= factor(Group,levels=c('UTR','TR'))) ,aes(x=Time_Period)) +  
+  geom_split_violin(aes(x=Time_Period,y=CH4,fill=Group)) + 
+  scale_fill_brewer(palette="Set2") +
+  ylab("CH4 output (g/day)") +
+  xlab("Time Period") +
+  theme_classic() +
+  theme(legend.position='none')
+```
+```{r}
+ggplot(data=df.greenfeed.rolling.means %>% 
+         mutate(Time_Period = factor(Time_Period, levels=c('Pre-Training','Training','Post-Training'))) %>% 
+         mutate(Group= factor(Group,levels=c('UTR','TR'))) ,aes(x=Time_Period)) +  
+  geom_split_violin(aes(x=Time_Period,y=CH4.mean,fill=Group)) + 
+  scale_fill_brewer(palette="Set2") +
+  ylab("CH4 output (g/day)") +
+  xlab("Time Period") +
+  theme_classic() +
+  theme(legend.position='none')
+```
+```{r}
+ggplot(data=subset(df.greenfeed.rolling,Time_Period=='Post-Training') %>% 
+         mutate(Time_Period = factor(Time_Period, levels=c('Pre-Training','Training','Post-Training'))) %>% 
+         mutate(Group= factor(Group,levels=c('UTR','TR'))) ,aes(x=Time_Period)) +  
+  geom_split_violin(aes(x=Time_Period,y=durationCount,fill=Group)) + 
+  scale_fill_brewer(palette="Set2") +
+  ylab("Visits per Day") +
+  xlab("Time Period") +
+  theme_classic() +
+  theme(legend.position='none')
+#subset(df.greenfeed.rolling, Time_Period=='Pre-Training')
+#table(df.greenfeed.rolling$durationCount)
+```
+```{r}
+mean(subset(df.greenfeed.rolling,Time_Period=='Post-Training' & Group=='UTR')$durationCount)
+mean(subset(df.greenfeed.rolling,Time_Period=='Post-Training' & Group=='TR')$durationCount)
+
+t.test(subset(df.greenfeed.rolling,Time_Period=='Post-Training' & Group=='UTR')$durationCount,subset(df.greenfeed.rolling,Time_Period=='Post-Training' & Group=='TR')$durationCount)
+```
+
+```{r}
+ggplot(data=subset(df.greenfeed.rolling.means,Time_Period!='Pre-Training') %>% 
+         mutate(Time_Period = factor(Time_Period, levels=c('Pre-Training','Training','Post-Training'))) %>% 
+         mutate(Group= factor(Group,levels=c('UTR','TR'))) ,aes(x=Time_Period)) +  
+  geom_split_violin(aes(x=Time_Period,y=durationCount.mean,fill=Group)) + 
+  scale_fill_brewer(palette="Set2") +
+  ylab("Visits per Day") +
+  xlab("Time Period") +
+  theme_classic()
+```
+```{r}
+ggplot(data=subset(df.greenfeed.rolling,Time_Period!='Pre-Training') %>%
+         mutate(Time_Period = factor(Time_Period, levels=c('Pre-Training','Training','Post-Training'))) %>% 
+         mutate(Group= factor(Group,levels=c('UTR','TR'))) ,aes(x=Time_Period)) +  
+  geom_split_violin(aes(x=Time_Period,y=goodDataDuration,fill=Group)) + 
+  scale_fill_brewer(palette="Set2") +
+  ylab("Visit Duration per Day") +
+  xlab("Time Period") +
+  theme_classic()
+```
+```{r}
+ggplot(data=subset(df.greenfeed.rolling.means,Time_Period!='Pre-Training') %>%
+         mutate(Time_Period = factor(Time_Period, levels=c('Pre-Training','Training','Post-Training'))) %>% 
+         mutate(Group= factor(Group,levels=c('UTR','TR'))) ,aes(x=Time_Period)) +  
+  geom_split_violin(aes(x=Time_Period,y=goodDataDuration.mean,fill=Group)) + 
+  scale_fill_brewer(palette="Set2") +
+  ylab("Visit Duration per Day") +
+  xlab("Time Period") +
+  theme_classic()
+```
+```{r}
+ggplot(data=  merge(df.milk2,df.weight,by='cow_id') %>%
+  mutate(avg_milk_yield = DayTMilk/2.2) %>%
+  mutate(efficiency=avg_milk_yield/Weight) %>%
+  mutate(Time_Period=str_replace(Time_Period, 'pre-train','Pre-Training')) %>%
+  mutate(Time_Period=str_replace(Time_Period, 'training','Training')) %>%
+  mutate(Time_Period=str_replace(Time_Period, 'post-train','Post-Training')) %>%
+  mutate(Time_Period = factor(Time_Period, levels=c('Pre-Training','Training','Post-Training'))) %>% 
+  mutate(Group= factor(Group,levels=c('UTR','TR'))),
+  aes(x=Time_Period)) +  
+  
+  geom_split_violin(aes(x=Time_Period,y=efficiency,fill=Group)) + 
+  scale_fill_brewer(palette="Set2") +
+  ylab("Milk Efficiency (kg yield/BW)") +
+  xlab("Time Period") +
+  theme_classic() +
+  theme(legend.position='none')
+```
+
+
+This is an attempt to use multiple geom_density functions to achieve the same end.  geom_density_ridges appears to be locked to a horizontal view, with no way to adjust height or distance.  I don't think this'll work.
+```{r}
+df.hr2 <- df.hr %>% mutate(Date=as.character(Date))
+ggplot(data=df.hr2,aes(x=mean,y=Date)) +
+  geom_density_ridges()
+```
+```{r}
+df.hr2 <- df.hr %>% mutate(Date=as.character(Date))
+ggplot(data=df.hr2,aes(x=Date,y=mean)) +
+  geom_density(data=subset(df.hr2,Date='2023-10-01'),aes(y=mean))
+```
+
+```{r}
+ggplot(data=df.hr.TR,aes(x=Date,y=mean)) +
+  geom_violin()
+```
+```{r}
+geom_split_violin <- function(mapping = NULL,
+                              data = NULL,
+                              stat = "ydensity",
+                              position = "identity",
+                              ...,
+                              draw_quantiles = NULL,
+                              trim = TRUE,
+                              scale = "area",
+                              na.rm = FALSE,
+                              show.legend = NA,
+                              inherit.aes = TRUE) {
+  ggplot2::layer(
+    data = data, mapping = mapping, stat = stat, geom = GeomSplitViolin,
+    position = position, show.legend = show.legend, inherit.aes = inherit.aes,
+    params = list(
+      trim = trim, scale = scale, draw_quantiles = draw_quantiles,
+      na.rm = na.rm, ...
+    )
+  )
+}
+
+#' @format NULL
+#' @usage NULL
+GeomSplitViolin <- ggplot2:::ggproto("GeomSplitViolin",
+                                     ggplot2::GeomViolin,
+                                     draw_group = function(self, data, ..., draw_quantiles = NULL) {
+                                       data <- transform(data, xminv = x - violinwidth * (x - xmin), xmaxv = x + violinwidth * (xmax - x))
+                                       grp <- data[1, "group"]
+                                       newdata <- plyr::arrange(transform(data, x = if (grp %% 2 == 1) xminv else xmaxv), if (grp %% 2 == 1) y else -y)
+                                       newdata <- rbind(newdata[1, ], newdata, newdata[nrow(newdata), ], newdata[1, ])
+                                       newdata[c(1, nrow(newdata) - 1, nrow(newdata)), "x"] <- round(newdata[1, "x"])
+                                       if (length(draw_quantiles) > 0 & !scales::zero_range(range(data$y))) {
+                                         stopifnot(all(draw_quantiles >= 0), all(draw_quantiles <=
+                                                                                   1))
+                                         quantiles <- ggplot2:::create_quantile_segment_frame(data, draw_quantiles)
+                                         aesthetics <- data[rep(1, nrow(quantiles)), setdiff(names(data), c("x", "y")), drop = FALSE]
+                                         aesthetics$alpha <- rep(1, nrow(quantiles))
+                                         both <- cbind(quantiles, aesthetics)
+                                         quantile_grob <- GeomPath$draw_panel(both, ...)
+                                         ggplot2:::ggname("geom_split_violin", grid::grobTree(GeomPolygon$draw_panel(newdata, ...), quantile_grob))
+                                       }
+                                       else {
+                                         ggplot2:::ggname("geom_split_violin", GeomPolygon$draw_panel(newdata, ...))
+                                       }
+                                     }
+)
+
+```
